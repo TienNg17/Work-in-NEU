@@ -1,0 +1,396 @@
+
+#Packages
+library(forcats)
+library(dslabs)
+library(tidyverse)
+library(ggplot2)
+library(tree)
+library(gam)
+library(tseries)
+library(urca)
+library(forecast)
+library(caret)
+library(lmtest)
+library(Metrics)
+library(tsutils)
+library(Hmisc)
+library(stats)
+library(dplyr)
+library(zoo)
+library(patchwork)
+library(lubridate)
+library(MASS)
+library(vars)
+library(naniar)
+library(fastDummies)
+library(caTools)
+library(corrplot)
+library(readr)
+library(tidymodels)
+library(smotefamily)
+library(leaps)
+library(DMwR)
+library(randomForest)
+library(datasets)
+library(glmnet)
+
+
+#Import data_train and data_test
+setwd("D:/Documents/2022-2023-HK2/New folder/data/credit")
+data = read.csv("credit_train.csv")
+
+#Top of data frame
+head(data, 10)
+#Thong ke mo ta du lien
+summary(data)
+#Missing value
+miss_var_summary(data)
+miss_var_table(data)
+
+#XU LY DU LIEU
+#Loai 2 bien dinh danh
+data = data %>% dplyr::select(-Loan.ID, -Customer.ID)
+#Loai bo bien co missing value > 50%
+data  = data %>% dplyr::select(-Months.since.last.delinquent)
+#Bo 2 quan sat missing value o bien Maximum.Open.Credit va Tax.Liens vi rat it
+data = data %>% drop_na(Maximum.Open.Credit, Tax.Liens)
+#bo nhung quan sat missing o bien Bankruptcies
+data = data %>% drop_na(Bankruptcies)
+
+  ##xu ly missing value o bien Credit.Score va Annual.Income 
+str(data)
+a = c("Credit.Score", "Annual.Income")
+data[a] = lapply(data[a], as.numeric)
+
+#Do thi Credit.Score
+ggplot(data, aes(x = Credit.Score)) + 
+  geom_bar(colour="black", fill = "#CC0000", width = 1) +
+  scale_x_continuous(breaks = seq(500,1000,50))+
+  theme(axis.text.x = element_text(angle = 0, size = 10))+
+  labs(x = "Score", y = "Count", title = "Credit Score")
+
+#gia tri cua bien Credit.Score chu yeu trong khoang 600 - 750. fill bang gia tri ngau nhien của Credit.Score
+cre_s = tibble(data$Credit.Score)
+names(cre_s) = c("Credit.Score")
+cre_sco_0miss = drop_na(cre_s, Credit.Score)
+data$Credit.Score[is.na(data$Credit.Score)] = sample(cre_sco_0miss$Credit.Score, sum(is.na(data$Credit.Score)),replace=TRUE)
+n_miss(data$Credit.Score)
+
+#Do thi Annual.Income
+data %>%
+  filter( Annual.Income< (7.5*10^6)) %>%
+  ggplot( aes(x=Annual.Income)) +
+    geom_histogram(colour="black", fill = "#CC0000", width = 1, bins = 120) +
+    scale_x_continuous(breaks = seq(750000,7500000,750000)) +
+    theme(axis.text.x = element_text(angle = 30, size = 10))+
+    labs(x = "Income ($)", y = "Count", title = "Annual Income")
+
+#Annual.Income co gia tri trong khoang tu 7*10^5 den 7.5*10^6
+annu_i = tibble(data$Annual.Income)
+names(annu_i) = c("Annual.Income")
+anni_i_0miss = drop_na(annu_i, Annual.Income)
+data$Annual.Income[is.na(data$Annual.Income)] = sample(anni_i_0miss$Annual.Income, sum(is.na(data$Annual.Income)),replace=TRUE)
+n_miss(data$Annual.Income)
+
+# replace missing value o bien Years.im.current.job boi gia tri mode
+summary(data$Years.in.current.job)
+c = c("Years.in.current.job")
+data[c] = lapply(data[c], as.factor)
+data %>%
+  ggplot( aes(x=Years.in.current.job)) +
+    geom_bar(colour="black", fill = "#CC0000", width = 0.75) +
+    theme(axis.text.x = element_text(angle = 30, size = 10))+
+    labs(x = "Years", y = "Count", title = "Years in Current job")
+data$Years.in.current.job = data$Years.in.current.job %>% replace_na("10+ years")
+
+#Current.Loan.Amount co gia tri Missing hien thi 99999999
+data$Current.Loan.Amount[data$Current.Loan.Amount == 99999999] = mean(data$Current.Credit.Balance[data$Current.Credit.Balance != 99999999])
+summary(data$Current.Loan.Amount)
+
+ggplot(data, aes(x = Current.Loan.Amount)) + 
+  geom_histogram(colour="black", fill = "#CC0000", width = 1) +
+  scale_x_continuous(breaks = seq(50000,1000000,150000))+
+  theme(axis.text.x = element_text(angle = 0, size = 10))+
+  labs(x = "Loan ($)", y = "Count", title = "Current Loan Amount")
+
+#correlation coefficient
+cor_data = cor(data[c("Current.Loan.Amount", "Credit.Score", "Annual.Income", "Monthly.Debt", "Number.of.Open.Accounts", "Years.of.Credit.History", "Number.of.Credit.Problems", "Current.Credit.Balance", "Maximum.Open.Credit", "Bankruptcies", "Tax.Liens")], method = "pearson")
+corrplot(cor_data, sig.level = 1, order = "alphabet", diag = T, tl.srt = 60, tl.col = "black", method = "circle" )
+
+#Mo ta du lieu
+c = c("Loan.Status", "Purpose", "Term", "Home.Ownership")
+data[c] = lapply(data[c], as.factor)
+
+ggplot(data, aes(x = Loan.Status)) + 
+  geom_bar(colour="black", fill = c("#99CCFF","#0099CC"), width = 0.5) +
+  theme(axis.text.x = element_text(angle = 0, size = 10))+
+  labs(x = "Status", y = "Count", title = "Loan Status") +
+ggplot(data, aes(x = Term)) + 
+  geom_bar(colour="black", fill = c("#888888","#CCFFFF"), width = 0.5) +
+  theme(axis.text.x = element_text(angle = 0, size = 10))+
+  labs(x = "Term", y = "Count", title = "Term of Loan")
+
+ggplot(data, aes(x = Purpose)) + 
+  geom_bar(colour="black", fill = "#CC0000", width = 1) +
+  theme(axis.text.x = element_text(angle = 30, size = 7))+
+  labs(x = "Purpose", y = "Count", title = "Purpose of Loan")
+
+ggplot(data, aes(x = Home.Ownership)) + 
+  geom_bar(colour="black", fill = "#CC0000", width = 0.75) +
+  theme(axis.text.x = element_text(angle = 0, size = 10))+
+  labs(x = "Home", y = "Count", title = "Home Ownership")
+
+
+#Loan status theo Purpose
+LT_PP = data.frame(data$Loan.Status, data$Purpose)
+names(LT_PP) = c("Loan.Status", "Purpose")
+
+LT_PP = LT_PP %>% group_by(Purpose) %>%
+  mutate(sum_quan = length(Purpose)) %>%
+  ungroup()
+
+  #Charged off and purpose
+co_pp = LT_PP %>% filter(Loan.Status == "Charged Off")
+co_pp = co_pp %>% group_by(Purpose) %>%
+  mutate(Quantity = length(Purpose)) %>%
+  mutate(Rate = Quantity/sum_quan) %>%
+  ungroup()
+
+n = c(seq(1,9),seq(11,15))
+g = data.frame(unique(co_pp$Purpose), unique(co_pp$Rate))
+h = data.frame(g[n,])
+
+co_pp = data.frame(h, unique(co_pp$Quantity))
+names(co_pp) = c("Purpose", "Rate", "Quantity")
+co_pp[nrow(co_pp) + 1,] = c("Take a Trip", 115/572, 115)
+
+c = c("Rate", "Quantity")
+co_pp[,c] = lapply(co_pp[,c], as.numeric)
+
+ggplot(data, aes(Purpose, fill = Loan.Status)) +
+    geom_bar(stat = "count") +
+    scale_fill_manual(values = c('#FFCC33','#CC9966')) +
+    labs(title = "number of Fully Paid/Charged Off customers", fill = "Loan Status") + 
+    theme(axis.text.x = element_text(angle = 45, size = 5))
+
+ggplot(co_pp, aes(x = Purpose, y = Rate)) +
+  geom_col(width = 0.75,color = "black", fill = "#888888") +
+  theme(axis.text.x = element_text(angle = 45, size = 5)) +
+  labs(title = "Charged Off by Purpose", x = "Purpose", y = "Rate")
+
+
+#Loan Status va Home Ownership
+LT_HO = data.frame(data$Loan.Status, data$Home.Ownership)
+names(LT_HO) = c("Loan.Status", "Home.Ownership")
+
+LT_HO = LT_HO %>% group_by(Home.Ownership) %>%
+  mutate(sum_quan = length(Home.Ownership)) %>%
+  ungroup()
+
+  #Charged off and H.O
+co_ho = LT_HO %>% filter(Loan.Status == "Charged Off")
+co_ho = co_ho %>% group_by(Home.Ownership) %>%
+  mutate(Quantity = length(Home.Ownership)) %>%
+  mutate(Rate = Quantity/sum_quan) %>%
+  ungroup()
+
+g = data.frame(unique(co_ho$Home.Ownership), unique(co_ho$Rate))
+
+co_ho = data.frame(g, unique(co_ho$Quantity))
+names(co_ho) = c("Home.Ownership", "Rate", "Quantity")
+
+c = c("Rate", "Quantity")
+co_ho[,c] = lapply(co_ho[,c], as.numeric)
+
+ggplot(data, aes(Home.Ownership, fill = Loan.Status)) +
+    geom_bar(stat = "count") +
+    scale_fill_manual(values = c('#FFCC33','#CC9966')) +
+    labs(title = "number of Fully Paid/Charged Off customers", fill = "Loan Status") + 
+    theme_light() + stat_count(geom = "text", aes(label = stat(count)), vjust = 1)
+
+ggplot(co_ho, aes(x = Home.Ownership, y = Rate)) +
+  geom_col(width = 0.75,color = "black", fill = c("#99CCFF", "#0099CC", "#CCFFFF", "#888888")) +
+  theme(axis.text.x = element_text(angle = 0, size = 10)) +
+  labs(title = "Charged Off by Home Ownership", x = "Home", y = "Rate")
+
+
+#Loan Status va Term
+LT_T = data.frame(data$Loan.Status, data$Term)
+names(LT_T) = c("Loan.Status", "Term")
+
+LT_T = LT_T %>% group_by(Term) %>%
+  mutate(sum_quan = length(Term)) %>%
+  ungroup()
+
+  #Charged off and H.O
+co_t = LT_T %>% filter(Loan.Status == "Charged Off")
+co_t = co_t %>% group_by(Term) %>%
+  mutate(Quantity = length(Term)) %>%
+  mutate(Rate = Quantity/sum_quan) %>%
+  ungroup()
+
+g = data.frame(unique(co_t$Term), unique(co_t$Rate))
+co_t = data.frame(g, unique(co_t$Quantity))
+names(co_t) = c("Term", "Rate", "Quantity")
+
+c = c("Rate", "Quantity")
+co_t[,c] = lapply(co_t[,c], as.numeric)
+
+ggplot(data, aes(Term, fill = Loan.Status)) +
+    geom_bar(stat = "count") +
+    scale_fill_manual(values = c('#FFCC33','#CC9966')) +
+    labs(title = "number of Fully Paid/Charged Off customers", x = "Ky han", y = "So luong", fill = "Loan Status") + 
+    theme_light() + stat_count(geom = "text", aes(label = stat(count)), vjust = 1) +
+
+ggplot(co_t, aes(x = Term, y = Rate)) +
+  geom_col(width = 0.75,color = "black", fill = c("#99CCFF", "#0099CC")) +
+  theme_light() +
+  labs(title = "Charged Off by Term", x = "Term", y = "Rate")
+
+
+# SMOTE data
+as.data.frame(table(data$Loan.Status))
+new_data = SMOTE(Loan.Status ~ ., data, perc.over = 200, perc.under = 170)
+as.data.frame(table(new_data$Loan.Status))
+
+#Chia du lieu thanh tap train va tap test
+set.seed(178)
+split <- initial_split(new_data, prop = 0.8, strata = Loan.Status)
+train <- split %>% 
+         training()
+test <- split %>% 
+        testing()
+
+new_train2 = train
+new_train2[,c(3,8,6,7)] = lapply(new_train2[,c(3,8,6,7)], as.numeric)
+
+##Drop nhung cot da doi thanh bien gia
+new_test = test
+new_test[,c(3,8,6,7)] = lapply(new_test[,c(3,8,6,7)], as.numeric)
+
+# Define the logistic regression model with penalty and mixture hyperparameters
+log_reg <- logistic_reg(mixture = tune(), penalty = tune(), engine = "glmnet")
+
+# Define the grid search for the hyperparameters
+grid <- grid_regular(mixture(), penalty(), levels = c(mixture = 4, penalty = 3))
+
+# Define the workflow for the model
+log_reg_wf <- workflow() %>%
+  add_model(log_reg) %>%
+  add_formula(Loan.Status ~ .)
+
+# Define the resampling method for the grid search
+folds <- vfold_cv(new_train2, v = 5)
+
+# Tune the hyperparameters using the grid search
+log_reg_tuned <- tune_grid(
+  log_reg_wf,
+  resamples = folds,
+  grid = grid,
+  control = control_grid(save_pred = TRUE)
+)
+select_best(log_reg_tuned, metric = "roc_auc")
+
+library(ROSE)
+#Logistics Reg
+model_lr = logistic_reg(mixture = 0, penalty = 0) %>%
+  set_engine("glmnet") %>%
+  set_mode("classification") %>%
+  fit(Loan.Status ~ ., data = new_train2)
+
+# Model summary
+tidy(model_lr)
+
+# Class Predictions
+pred_class = predict(model_lr,
+                      new_data = new_test,
+                      type = "class")
+
+# Class Probabilities
+pred_proba = predict(model_lr,
+                      new_data = new_test,
+                      type = "prob")
+
+result_lr = new_test %>%
+           dplyr::select(Loan.Status) %>%
+           bind_cols(pred_class, pred_proba)
+accuracy(result_lr, truth = Loan.Status, estimate = .pred_class)
+
+conf_lr = confusionMatrix(as.factor(result_lr[,1]), as.factor(result_lr[,2]))
+print(conf_lr)
+
+roc.curve(result_lr[,1], result_lr[,2], plotit = T)
+
+#decision tree
+library(rpart)
+library(rpart.plot)
+
+model_dt <- rpart(Loan.Status~., data = new_train2, method = 'class')
+rpart.plot(model_dt, extra = 106)
+
+pred_tree <-predict(model_dt, new_test, type = 'class')
+
+table_mat <- confusionMatrix(new_test$Loan.Status, pred_tree)
+table_mat
+
+
+roc.curve(new_test$Loan.Status, pred_tree, plotit = T)
+
+
+#Random Forest
+try_rf <- tuneRF(new_train2[-1],new_train2$Loan.Status, ntreeTry=500,
+               stepFactor=1.5,improve=0.01, trace=TRUE, plot=TRUE)
+
+best.m <- try_rf[try_rf[, 2] == min(try_rf[, 2]), 1]
+print(try_rf)
+print(best.m)
+
+
+model_rf = randomForest(x = new_train2[-c(1)],
+                             y = new_train2$Loan.Status,
+                             ntree = 500, mtry = 4)
+  
+model_rf
+
+pred_rf = predict(model_rf, newdata = new_test[-1])
+
+# Confusion Matrix
+confusion_mtx = confusionMatrix(new_test[, 1], pred_rf)
+confusion_mtx
+
+roc.curve(new_test$Loan.Status, pred_rf, plotit = T)
+# Plotting model
+plot(model_rf)
+# Importance plot
+importance(model_rf)
+# Variable importance plot
+varImpPlot(model_rf)
+
+#Gradient Boosting
+library(gbm)
+library(doParallel)
+library(mlapi)
+
+model_gbm = gbm(Loan.Status ~.,
+                data = new_train2,
+                distribution = "multinomial",
+                cv.folds = 10,
+                shrinkage = .01,
+                n.minobsinnode = 10,
+                n.trees = 500)  
+
+summary(model_gbm)
+
+pred_gbm = predict.gbm(object = model_gbm,
+                        newdata = new_test,
+                        n.trees = 500,           # 500 tress to be built
+                        type = "response")
+
+class_names = colnames(pred_gbm)[apply(pred_gbm, 1, which.max)]
+
+result_gbm = data.frame(new_test$Loan.Status, class_names)
+
+conf_mat = confusionMatrix(as.factor(result_gbm[,1]), as.factor(result_gbm[,2]))
+print(conf_mat)
+
+roc.curve(new_test$Loan.Status, class_names, plotit = T)
